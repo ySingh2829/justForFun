@@ -39,28 +39,25 @@ const HuffmanEncoding = struct {
     pub fn deinit(self: *Self) void {
         self.p_queue.deinit();
         self.map.deinit();
-        self._destroy_encoded_map();
         self.encoded_string.deinit();
+        self._destroy_encoded_map();
     }
 
     fn _destroy_encoded_map(self: *Self) void {
         defer self.encoded_map.deinit();
         var iter = self.encoded_map.iterator();
-
-        while (iter.next()) |entity| {
-            self.allocator.destroy(entity.value_ptr);
+        while (iter.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
         }
     }
 
-    fn _destroy_nodes(self: *Self, node: ?*Node) void {
-        const node_item = node orelse return;
+    fn _delete_tree(self: *Self, node: ?*Node) void {
+        if (node) |n| {
+            self._delete_tree(n.left);
+            self._delete_tree(n.right);
 
-        if (_isLeaf(node_item)) {
-            self.allocator.destroy(node_item);
+            self.allocator.destroy(n);
         }
-
-        self._destroy_nodes(node_item.left);
-        self._destroy_nodes(node_item.right);
     }
 
     pub fn encode(self: *Self, text: []const u8) ![]u8 {
@@ -93,15 +90,26 @@ const HuffmanEncoding = struct {
 
         if (_isLeaf(node_item)) {
             if (node_item.ch) |character| {
-                const code = if (s.len > 0) s else @constCast("1");
+                var code: []u8 = undefined;
+                if (s.len > 0) {
+                    code = try self.allocator.dupe(u8, s);
+                } else {
+                    const ptr = try self.allocator.alloc(u8, 1);
+                    ptr[0] = '1';
+                    code = ptr;
+                }
                 try self.encoded_map.put(character, code);
             }
         }
 
         const left_node_code = try self._concat(s, "0");
         const right_node_code = try self._concat(s, "1");
+
         try self._encode(node_item.left, left_node_code);
         try self._encode(node_item.right, right_node_code);
+
+        self.allocator.free(left_node_code);
+        self.allocator.free(right_node_code);
     }
 
     fn _buildTree(self: *Self, text: []const u8) !void {
@@ -118,7 +126,7 @@ const HuffmanEncoding = struct {
         while (iterator.next()) |entry| {
             const char = entry.key_ptr.*;
             const freq = entry.value_ptr.*;
-            const node = try (self.allocator.create(Node));
+            const node = try self.allocator.create(Node);
             node.* = .{ .ch = char, .freq = freq, .left = null, .right = null };
 
             try self.p_queue.add(node);
@@ -139,10 +147,8 @@ const HuffmanEncoding = struct {
 
             try self.p_queue.add(intermidate_node);
         }
-
         const root = self.p_queue.remove();
-        defer self._destroy_nodes(root);
-        defer self.map.clearRetainingCapacity();
+        defer self._delete_tree(root);
 
         try self._encode(root, "");
     }
@@ -151,6 +157,14 @@ const HuffmanEncoding = struct {
 const ArgsError = error{
     NoArgumentProvided,
 };
+
+test "testing_encoding" {
+    const text: []const u8 = "abcaabbaaaccaaaa";
+    var huffman_encoding = HuffmanEncoding.init(std.testing.allocator);
+    defer huffman_encoding.deinit();
+    const encoded_string = try huffman_encoding.encode(text);
+    try std.testing.expectEqualStrings("1000111000011101011111", encoded_string);
+}
 
 pub fn main() !void {
     var args = std.process.args();
@@ -175,5 +189,5 @@ pub fn main() !void {
     defer huffman_encoding.deinit();
     const encoded_string = try huffman_encoding.encode(text);
     const outw = std.io.getStdOut().writer();
-    try outw.print("{s}\n", .{ encoded_string });
+    try outw.print("{s}\n", .{encoded_string});
 }
