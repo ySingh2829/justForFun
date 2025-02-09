@@ -141,11 +141,10 @@ const HuffmanEncoding = struct {
         }
 
         const root = self.p_queue.remove();
-        const root_ptr: ?*Node = root;
-        defer self._destroy_nodes(root_ptr);
+        defer self._destroy_nodes(root);
         defer self.map.clearRetainingCapacity();
 
-        try self._encode(root_ptr, "");
+        try self._encode(root, "");
     }
 };
 
@@ -156,7 +155,14 @@ const ArgsError = error{
 pub fn main() !void {
     var args = std.process.args();
     _ = args.next();
-    const arg = args.next() orelse return error.NoArgumentProvided;
+    const outError = std.io.getStdErr().writer();
+    var text: []const u8 = undefined;
+    if (args.next()) |arg| {
+        text = arg;
+    } else {
+        try outError.print("Please provide text for encoding", .{});
+        return error.NoArgumentProvided;
+    }
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -167,12 +173,7 @@ pub fn main() !void {
     const aa = arena.allocator();
     var huffman_encoding = HuffmanEncoding.init(aa);
     defer huffman_encoding.deinit();
-    const encoded_string = try huffman_encoding.encode(arg);
-    var iterator = huffman_encoding.encoded_map.iterator();
-    while (iterator.next()) |entry| {
-        const key = entry.key_ptr.*;
-        const value = entry.value_ptr.*;
-        std.debug.print("Key: {c}, Value: {s}\n", .{key, value});
-    }
-    std.debug.print("{s}: {s}\n", .{ arg, encoded_string });
+    const encoded_string = try huffman_encoding.encode(text);
+    const outw = std.io.getStdOut().writer();
+    try outw.print("{s}\n", .{ encoded_string });
 }
