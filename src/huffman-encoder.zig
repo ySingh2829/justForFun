@@ -51,15 +51,6 @@ const HuffmanEncoding = struct {
         }
     }
 
-    fn _delete_tree(self: *Self, node: ?*Node) void {
-        if (node) |n| {
-            self._delete_tree(n.left);
-            self._delete_tree(n.right);
-
-            self.allocator.destroy(n);
-        }
-    }
-
     pub fn encode(self: *Self, text: []const u8) ![]u8 {
         try self._buildTree(text);
 
@@ -85,14 +76,14 @@ const HuffmanEncoding = struct {
         return result;
     }
 
-    fn _encode(self: *Self, node: ?*Node, s: []u8) !void {
+    fn _encode(self: *Self, node: ?*Node, s: *std.ArrayList(u8)) !void {
         const node_item = node orelse return;
 
         if (_isLeaf(node_item)) {
             if (node_item.ch) |character| {
                 var code: []u8 = undefined;
-                if (s.len > 0) {
-                    code = try self.allocator.dupe(u8, s);
+                if (s.items.len > 0) {
+                    code = try self.allocator.dupe(u8, s.items);
                 } else {
                     const ptr = try self.allocator.alloc(u8, 1);
                     ptr[0] = '1';
@@ -102,14 +93,13 @@ const HuffmanEncoding = struct {
             }
         }
 
-        const left_node_code = try self._concat(s, "0");
-        const right_node_code = try self._concat(s, "1");
+        try s.append('0');
+        try self._encode(node_item.left, s);
+        _ = s.pop();
 
-        try self._encode(node_item.left, left_node_code);
-        try self._encode(node_item.right, right_node_code);
-
-        self.allocator.free(left_node_code);
-        self.allocator.free(right_node_code);
+        try s.append('1');
+        try self._encode(node_item.right, s);
+        _ = s.pop();
     }
 
     fn _buildTree(self: *Self, text: []const u8) !void {
@@ -121,12 +111,16 @@ const HuffmanEncoding = struct {
             }
         }
 
+        const num_chars = self.map.count();
+        var node_pool = try std.ArrayList(Node).initCapacity(self.allocator, (2 * num_chars) - 1);
+        defer node_pool.deinit();
+
         var iterator = self.map.iterator();
 
         while (iterator.next()) |entry| {
             const char = entry.key_ptr.*;
             const freq = entry.value_ptr.*;
-            const node = try self.allocator.create(Node);
+            const node = try node_pool.addOne();
             node.* = .{ .ch = char, .freq = freq, .left = null, .right = null };
 
             try self.p_queue.add(node);
@@ -137,7 +131,7 @@ const HuffmanEncoding = struct {
             const right = self.p_queue.remove();
 
             const new_freq = left.freq + right.freq;
-            const intermidate_node = try (self.allocator.create(Node));
+            const intermidate_node = try node_pool.addOne();
             intermidate_node.* = .{
                 .ch = null,
                 .freq = new_freq,
@@ -148,9 +142,12 @@ const HuffmanEncoding = struct {
             try self.p_queue.add(intermidate_node);
         }
         const root = self.p_queue.remove();
-        defer self._delete_tree(root);
 
-        try self._encode(root, "");
+        var buffer: [256]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buffer);
+        var bit_string = std.ArrayList(u8).init(fba.allocator());
+        defer bit_string.deinit();
+        try self._encode(root, &bit_string);
     }
 };
 
